@@ -1,13 +1,12 @@
 /**
- * Serviço de Persistência Local (Offline-First)
+ * SERVIÇO DE ARMAZENAMENTO LOCAL (OFFLINE-FIRST)
  */
 class StorageService {
   static get(key, defaultValue = []) {
     try {
       const data = localStorage.getItem(key);
       return data ? JSON.parse(data) : defaultValue;
-    } catch (e) {
-      console.error('Falha ao ler localStorage:', e);
+    } catch {
       return defaultValue;
     }
   }
@@ -16,13 +15,13 @@ class StorageService {
     try {
       localStorage.setItem(key, JSON.stringify(value));
     } catch (e) {
-      console.error('Falha ao salvar no localStorage:', e);
+      console.error('Falha de armazenamento:', e);
     }
   }
 }
 
 /**
- * Entidade de Exercício/Treino
+ * MODELO DE TREINO
  */
 class WorkoutEntry {
   constructor(id, name, sets, reps, weight, duration, date) {
@@ -40,9 +39,6 @@ class WorkoutEntry {
   }
 }
 
-/**
- * Gerenciador de Treinos
- */
 class WorkoutManager {
   constructor() {
     this.storageKey = 'app_workouts_data';
@@ -50,16 +46,12 @@ class WorkoutManager {
   }
 
   loadEntries() {
-    const rawData = StorageService.get(this.storageKey, []);
-    return rawData.map(item => new WorkoutEntry(
-      item.id, item.name, item.sets, item.reps, item.weight, item.duration, item.date
-    ));
+    const data = StorageService.get(this.storageKey, []);
+    return data.map(i => new WorkoutEntry(i.id, i.name, i.sets, i.reps, i.weight, i.duration, i.date));
   }
 
   addEntry(data) {
-    const entry = new WorkoutEntry(
-      null, data.name, data.sets, data.reps, data.weight, data.duration, data.date
-    );
+    const entry = new WorkoutEntry(null, data.name, data.sets, data.reps, data.weight, data.duration, data.date);
     this.entries.unshift(entry);
     this.save();
     return entry;
@@ -69,23 +61,26 @@ class WorkoutManager {
     StorageService.set(this.storageKey, this.entries);
   }
 
-  getEntriesForDate(dateStr) {
-    return this.entries.filter(e => e.date === dateStr);
+  getTodayCount() {
+    const today = new Date().toISOString().split('T')[0];
+    return this.entries.filter(e => e.date === today).length;
   }
 }
 
 /**
- * Entidade Livro
+ * MODELO DE LIVRO DA ESTANTE (ESTILO SKOOB / MARATONA.APP)
  */
 class Book {
-  constructor(id, title, authors, totalPages, thumbnail, currentPage = 0, status = 'reading') {
-    this.id = id;
-    this.title = title;
-    this.authors = authors;
-    this.totalPages = Number(totalPages) > 0 ? Number(totalPages) : 1;
-    this.thumbnail = thumbnail || 'https://via.placeholder.com/128x192?text=Sem+Capa';
-    this.currentPage = Number(currentPage) || 0;
-    this.status = status;
+  constructor(data) {
+    this.id = data.id;
+    this.title = data.title;
+    this.authors = data.authors;
+    this.totalPages = Number(data.totalPages) > 0 ? Number(data.totalPages) : 100;
+    this.currentPage = Number(data.currentPage) || 0;
+    this.thumbnail = data.thumbnail || 'https://via.placeholder.com/128x192?text=Sem+Capa';
+    this.status = data.status || 'want_to_read'; // 'reading', 'want_to_read', 'read', 'dnf'
+    this.rating = Number(data.rating) || 0; // 1 a 5 estrelas
+    this.updatedAt = data.updatedAt || new Date().toISOString();
   }
 
   get progressPercentage() {
@@ -93,164 +88,286 @@ class Book {
     return Math.min(100, Math.round(pct));
   }
 
-  updateProgress(pages) {
-    this.currentPage = Math.min(this.totalPages, Math.max(0, Number(pages)));
-    if (this.currentPage >= this.totalPages) {
-      this.status = 'completed';
-    } else {
-      this.status = 'reading';
+  get pagesRemaining() {
+    return Math.max(0, this.totalPages - this.currentPage);
+  }
+
+  updateProgress(page, newStatus = null) {
+    this.currentPage = Math.min(this.totalPages, Math.max(0, Number(page)));
+    
+    if (newStatus) {
+      this.status = newStatus;
+    } else if (this.currentPage >= this.totalPages) {
+      this.status = 'read';
     }
+
+    this.updatedAt = new Date().toISOString();
   }
 }
 
 /**
- * Serviço de Conexão com Google Books API
+ * MOTOR DE PESQUISA COM DUPLA FONTE (GOOGLE BOOKS + OPEN LIBRARY OTIMIZADA)
  */
-class BookApiService {
-  static async search(query = 'programação ficção', startIndex = 0, maxResults = 20) {
-    const cleanQuery = encodeURIComponent(query.trim() || 'best sellers');
-    const url = `https://www.googleapis.com/books/v1/volumes?q=${cleanQuery}&startIndex=${startIndex}&maxResults=${maxResults}&printType=books`;
+class BookSearchEngine {
+  static async search(query, filterType = 'all', page = 0) {
+    const cleanQuery = query.trim();
+    if (!cleanQuery) return [];
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Erro na API (${response.status})`);
-    }
+    let formattedQuery = cleanQuery;
+    if (filterType === 'title') formattedQuery = `intitle:${cleanQuery}`;
+    if (filterType === 'author') formattedQuery = `inauthor:${cleanQuery}`;
 
-    const data = await response.json();
-    if (!data.items || data.items.length === 0) {
-      return [];
-    }
-
-    return data.items.map(item => {
-      const info = item.volumeInfo || {};
+    // 1ª Tentativa: Google Books API com timeout de segurança
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
       
-      // Forçar HTTPS nas imagens da capa para evitar Mixed Content
-      let cover = info.imageLinks ? (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail) : '';
-      if (cover && cover.startsWith('http://')) {
-        cover = cover.replace('http://', 'https://');
-      }
+      const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(formattedQuery)}&startIndex=${page * 15}&maxResults=15&printType=books`;
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
 
-      return {
-        id: item.id,
-        title: info.title || 'Título Indisponível',
-        authors: info.authors ? info.authors.join(', ') : 'Autor Desconhecido',
-        totalPages: info.pageCount || 250, // Estimativa padrão se a API não possuir contagem
-        thumbnail: cover
-      };
-    });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.items && data.items.length > 0) {
+          return data.items.map(item => {
+            const info = item.volumeInfo || {};
+            let cover = info.imageLinks ? (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail) : '';
+            if (cover && cover.startsWith('http://')) cover = cover.replace('http://', 'https://');
+
+            return {
+              id: item.id,
+              title: info.title || 'Título Desconhecido',
+              authors: info.authors ? info.authors.join(', ') : 'Autor Desconhecido',
+              totalPages: info.pageCount || 200,
+              thumbnail: cover || 'https://via.placeholder.com/128x192?text=Sem+Capa',
+              year: info.publishedDate ? info.publishedDate.substring(0, 4) : 'N/D'
+            };
+          });
+        }
+      }
+    } catch (errGoogle) {
+      console.warn('Google Books indisponível ou bloqueado, acionando Open Library:', errGoogle);
+    }
+
+    // 2ª Tentativa: Open Library com payload leve restrito por campos
+    try {
+      const olUrl = `https://openlibrary.org/search.json?q=${encodeURIComponent(cleanQuery)}&page=${page + 1}&limit=15&fields=key,title,author_name,number_of_pages_median,cover_i,first_publish_year`;
+      const olRes = await fetch(olUrl);
+      
+      if (olRes.ok) {
+        const olData = await olRes.json();
+        if (olData.docs && olData.docs.length > 0) {
+          return olData.docs.map(doc => ({
+            id: doc.key.replace('/works/', ''),
+            title: doc.title || 'Título Desconhecido',
+            authors: doc.author_name ? doc.author_name.slice(0, 2).join(', ') : 'Autor Desconhecido',
+            totalPages: doc.number_of_pages_median || 220,
+            thumbnail: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : 'https://via.placeholder.com/128x192?text=Sem+Capa',
+            year: doc.first_publish_year || 'N/D'
+          }));
+        }
+      }
+    } catch (errOL) {
+      console.error('Falha em ambos os provedores:', errOL);
+    }
+
+    return [];
   }
 }
 
 /**
- * Gerenciador da Biblioteca e Leitura
+ * GERENCIADOR DA BIBLIOTECA PESSOAL
  */
-class ReadingManager {
+class LibraryManager {
   constructor() {
-    this.storageKey = 'app_reading_library';
-    this.library = this.loadLibrary();
-    this.currentQuery = 'desenvolvimento pessoal';
-    this.currentStartIndex = 0;
+    this.storageKey = 'app_user_library_v2';
+    this.books = this.loadBooks();
   }
 
-  loadLibrary() {
-    const rawData = StorageService.get(this.storageKey, []);
-    return rawData.map(item => new Book(
-      item.id, item.title, item.authors, item.totalPages, item.thumbnail, item.currentPage, item.status
-    ));
+  loadBooks() {
+    const raw = StorageService.get(this.storageKey, []);
+    return raw.map(b => new Book(b));
   }
 
-  addBook(bookData) {
-    const alreadyExists = this.library.some(b => b.id === bookData.id);
-    if (alreadyExists) return false;
+  addBook(data, initialStatus = 'want_to_read') {
+    const existing = this.books.find(b => b.id === data.id || b.title.toLowerCase() === data.title.toLowerCase());
+    if (existing) return { success: false, book: existing };
 
-    const book = new Book(
-      bookData.id,
-      bookData.title,
-      bookData.authors,
-      bookData.totalPages,
-      bookData.thumbnail,
-      0,
-      'reading'
-    );
+    const newBook = new Book({
+      ...data,
+      status: initialStatus,
+      currentPage: initialStatus === 'read' ? data.totalPages : 0
+    });
 
-    this.library.unshift(book);
+    this.books.unshift(newBook);
     this.save();
-    return book;
+    return { success: true, book: newBook };
   }
 
-  updateBookProgress(bookId, pages) {
-    const book = this.library.find(b => b.id === bookId);
+  updateBook(id, page, status, rating) {
+    const book = this.books.find(b => b.id === id);
     if (book) {
-      book.updateProgress(pages);
+      book.updateProgress(page, status);
+      if (rating !== undefined) book.rating = rating;
       this.save();
     }
   }
 
+  removeBook(id) {
+    this.books = this.books.filter(b => b.id !== id);
+    this.save();
+  }
+
   save() {
-    StorageService.set(this.storageKey, this.library);
+    StorageService.set(this.storageKey, this.books);
+  }
+
+  getFiltered(shelfStatus = 'all') {
+    if (shelfStatus === 'all') return this.books;
+    return this.books.filter(b => b.status === shelfStatus);
+  }
+
+  getCounts() {
+    return {
+      all: this.books.length,
+      reading: this.books.filter(b => b.status === 'reading').length,
+      want_to_read: this.books.filter(b => b.status === 'want_to_read').length,
+      read: this.books.filter(b => b.status === 'read').length,
+      dnf: this.books.filter(b => b.status === 'dnf').length
+    };
+  }
+
+  getTotalPagesRead() {
+    return this.books.reduce((acc, b) => acc + Number(b.currentPage), 0);
   }
 }
 
 /**
- * Controlador de Interface (UI)
+ * CONTROLADOR PRINCIPAL DA APLICAÇÃO (UI)
  */
 class AppUI {
   constructor() {
     this.workoutManager = new WorkoutManager();
-    this.readingManager = new ReadingManager();
-    this.booksLoadedSoFar = [];
+    this.libraryManager = new LibraryManager();
     
-    this.initElements();
+    this.currentSearchPage = 0;
+    this.currentFilterType = 'all';
+    this.activeShelfFilter = 'all';
+    this.selectedBookForModal = null;
+    this.activeModalRating = 0;
+
+    this.initDOMElements();
     this.bindEvents();
     this.initApp();
   }
 
-  initElements() {
+  initDOMElements() {
+    // Header & Views
     this.currentDateEl = document.getElementById('current-date');
     this.viewTitleEl = document.getElementById('view-title');
     this.navButtons = document.querySelectorAll('.nav-item');
     this.views = document.querySelectorAll('.view');
 
-    // Workout Elements
+    // Treinos
     this.workoutForm = document.getElementById('workout-form');
-    this.workoutListEl = document.getElementById('workout-list');
+    this.workoutList = document.getElementById('workout-list');
     this.exerciseDateInput = document.getElementById('exercise-date');
 
-    // Reading Elements
+    // Livros & Busca
     this.bookSearchInput = document.getElementById('book-search-input');
     this.btnSearchBook = document.getElementById('btn-search-book');
-    this.apiStatusMessage = document.getElementById('api-status-message');
-    this.apiSearchResults = document.getElementById('api-search-results');
-    this.btnLoadMoreBooks = document.getElementById('btn-load-more-books');
-    this.libraryListEl = document.getElementById('library-list');
+    this.searchTypeBtns = document.querySelectorAll('.pill-btn');
+    this.searchStatus = document.getElementById('search-status');
+    this.searchResultsContainer = document.getElementById('search-results-container');
+    this.btnLoadMore = document.getElementById('btn-load-more');
 
-    // Overview Elements
-    this.statWorkoutsCount = document.getElementById('stat-workouts-count');
+    // Estante & Tabs
+    this.shelfTabs = document.querySelectorAll('.shelf-tab');
+    this.myShelfList = document.getElementById('my-shelf-list');
+    this.shelfTotalBadge = document.getElementById('shelf-total-badge');
+
+    // Modal
+    this.modal = document.getElementById('progress-modal');
+    this.modalBookTitle = document.getElementById('modal-book-title');
+    this.modalBookAuthor = document.getElementById('modal-book-author');
+    this.modalPageInput = document.getElementById('modal-page-input');
+    this.modalPagesTotal = document.getElementById('modal-pages-total');
+    this.modalStatusSelect = document.getElementById('modal-status-select');
+    this.modalRatingContainer = document.getElementById('modal-rating-container');
+    this.modalStars = document.querySelectorAll('#modal-stars span');
+    this.modalBtnCancel = document.getElementById('modal-btn-cancel');
+    this.modalBtnSave = document.getElementById('modal-btn-save');
+    this.btnStepMinus = document.getElementById('btn-step-minus');
+    this.btnStepPlus = document.getElementById('btn-step-plus');
+
+    // Stats Gerais
+    this.statWorkouts = document.getElementById('stat-workouts-count');
+    this.statBooksReading = document.getElementById('stat-books-reading');
     this.statPagesRead = document.getElementById('stat-pages-read');
+    this.statBooksCompleted = document.getElementById('stat-books-completed');
   }
 
   bindEvents() {
-    // Alternar abas
+    // Alternar abas principais
     this.navButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.switchView(btn.dataset.target, btn);
-      });
+      btn.addEventListener('click', () => this.switchView(btn.dataset.target, btn));
     });
 
-    // Submissão de treino
+    // Form de Treino
     this.workoutForm.addEventListener('submit', (e) => {
       e.preventDefault();
       this.handleWorkoutSubmit();
     });
 
-    // Busca de livros
-    this.btnSearchBook.addEventListener('click', () => this.handleNewBookSearch());
+    // Busca de Livros
+    this.btnSearchBook.addEventListener('click', () => this.handleNewSearch());
     this.bookSearchInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.handleNewBookSearch();
+      if (e.key === 'Enter') this.handleNewSearch();
     });
 
-    // Botão "Carregar Mais Livros"
-    this.btnLoadMoreBooks.addEventListener('click', () => this.handleLoadMoreBooks());
+    // Filtros de Tipo de Busca (Título, Autor, Tudo)
+    this.searchTypeBtns.forEach(pill => {
+      pill.addEventListener('click', () => {
+        this.searchTypeBtns.forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        this.currentFilterType = pill.dataset.type;
+        if (this.bookSearchInput.value.trim()) this.handleNewSearch();
+      });
+    });
+
+    // Carregar Mais Livros
+    this.btnLoadMore.addEventListener('click', () => this.handleLoadMore());
+
+    // Abas de Estante
+    this.shelfTabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        this.shelfTabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        this.activeShelfFilter = tab.dataset.shelf;
+        this.renderUserShelf();
+      });
+    });
+
+    // Modal de Leitura
+    this.modalBtnCancel.addEventListener('click', () => this.closeModal());
+    this.modalBtnSave.addEventListener('click', () => this.saveModalProgress());
+    this.btnStepMinus.addEventListener('click', () => {
+      this.modalPageInput.value = Math.max(0, Number(this.modalPageInput.value) - 10);
+    });
+    this.btnStepPlus.addEventListener('click', () => {
+      this.modalPageInput.value = Number(this.modalPageInput.value) + 10;
+    });
+
+    this.modalStatusSelect.addEventListener('change', (e) => {
+      this.modalRatingContainer.style.display = e.target.value === 'read' ? 'block' : 'none';
+    });
+
+    this.modalStars.forEach(star => {
+      star.addEventListener('click', () => {
+        const rating = Number(star.dataset.star);
+        this.setModalRating(rating);
+      });
+    });
   }
 
   initApp() {
@@ -261,11 +378,9 @@ class AppUI {
     });
 
     this.renderWorkouts();
-    this.renderLibrary();
-    this.updateOverviewStats();
-
-    // Carregamento automático de livros disponíveis ao iniciar
-    this.fetchAndRenderBooks(false);
+    this.updateShelfCounts();
+    this.renderUserShelf();
+    this.updateGlobalDashboard();
   }
 
   switchView(viewId, activeBtn) {
@@ -282,9 +397,7 @@ class AppUI {
     };
     this.viewTitleEl.innerText = titles[viewId] || 'Organizador';
 
-    if (viewId === 'view-overview') {
-      this.updateOverviewStats();
-    }
+    if (viewId === 'view-overview') this.updateGlobalDashboard();
   }
 
   handleWorkoutSubmit() {
@@ -301,133 +414,145 @@ class AppUI {
     this.workoutForm.reset();
     this.exerciseDateInput.value = payload.date;
     this.renderWorkouts();
+    this.updateGlobalDashboard();
   }
 
   renderWorkouts() {
-    this.workoutListEl.innerHTML = '';
+    this.workoutList.innerHTML = '';
     const entries = this.workoutManager.entries;
 
     if (entries.length === 0) {
-      this.workoutListEl.innerHTML = `<p class="item-meta">Nenhum treino registrado ainda.</p>`;
+      this.workoutList.innerHTML = `<p class="item-meta">Nenhum treino registrado.</p>`;
       return;
     }
 
     entries.forEach(entry => {
       const card = document.createElement('div');
-      card.className = 'item-card';
+      card.className = 'card';
+      card.style.padding = '12px';
       card.innerHTML = `
-        <div class="item-card-header">
-          <span class="item-title">${entry.name}</span>
-          <span class="item-meta">${entry.date}</span>
+        <div style="display: flex; justify-content: space-between; font-weight: 600;">
+          <span>${entry.name}</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">${entry.date}</span>
         </div>
-        <div class="item-meta">
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">
           ${entry.sets} séries × ${entry.reps} reps | ${entry.weight} kg (${entry.duration} min)
         </div>
-        <div class="item-meta" style="color: var(--accent-color); font-weight: 500;">
-          Volume: ${entry.totalVolume} kg levantados
+        <div style="font-size: 0.8rem; color: var(--accent-color); font-weight: 600; margin-top: 4px;">
+          Volume: ${entry.totalVolume} kg
         </div>
       `;
-      this.workoutListEl.appendChild(card);
+      this.workoutList.appendChild(card);
     });
   }
 
-  async handleNewBookSearch() {
+  async handleNewSearch() {
     const query = this.bookSearchInput.value.trim();
-    this.readingManager.currentQuery = query || 'ficção popular';
-    this.readingManager.currentStartIndex = 0;
-    this.booksLoadedSoFar = [];
-    this.apiSearchResults.innerHTML = '';
-    await this.fetchAndRenderBooks(false);
+    if (!query) return;
+
+    this.currentSearchPage = 0;
+    this.searchResultsContainer.innerHTML = '';
+    this.searchStatus.innerText = 'Pesquisando acervo global...';
+    this.btnLoadMore.style.display = 'none';
+
+    await this.executeSearch(query, false);
   }
 
-  async handleLoadMoreBooks() {
-    this.readingManager.currentStartIndex += 20;
-    await this.fetchAndRenderBooks(true);
+  async handleLoadMore() {
+    const query = this.bookSearchInput.value.trim();
+    this.currentSearchPage += 1;
+    this.btnLoadMore.innerText = 'Carregando...';
+    await this.executeSearch(query, true);
+    this.btnLoadMore.innerText = 'Carregar Mais Resultados';
   }
 
-  async fetchAndRenderBooks(isAppend = false) {
-    this.apiStatusMessage.innerText = 'Carregando livros disponíveis...';
-    this.btnLoadMoreBooks.style.display = 'none';
-
+  async executeSearch(query, isAppend) {
     try {
-      const results = await BookApiService.search(
-        this.readingManager.currentQuery,
-        this.readingManager.currentStartIndex,
-        20
-      );
-
-      this.apiStatusMessage.innerText = '';
+      const results = await BookSearchEngine.search(query, this.currentFilterType, this.currentSearchPage);
+      this.searchStatus.innerText = '';
 
       if (results.length === 0 && !isAppend) {
-        this.apiStatusMessage.innerText = 'Nenhum livro encontrado para esta busca.';
+        this.searchStatus.innerText = `Nenhum livro encontrado para "${query}". Tente outro termo ou autor.`;
         return;
       }
 
-      this.booksLoadedSoFar = isAppend ? [...this.booksLoadedSoFar, ...results] : results;
-      this.renderApiBooks(results, isAppend);
-
-      if (results.length >= 20) {
-        this.btnLoadMoreBooks.style.display = 'block';
-      }
-    } catch (err) {
-      console.error(err);
-      this.apiStatusMessage.innerText = 'Falha ao buscar livros. Verifique sua conexão e tente novamente.';
+      this.renderSearchResults(results, isAppend);
+      this.btnLoadMore.style.display = results.length >= 15 ? 'block' : 'none';
+    } catch {
+      this.searchStatus.innerText = 'Não foi possível carregar livros no momento. Verifique sua rede.';
     }
   }
 
-  renderApiBooks(books, isAppend) {
-    if (!isAppend) {
-      this.apiSearchResults.innerHTML = '';
-    }
+  renderSearchResults(books, isAppend) {
+    if (!isAppend) this.searchResultsContainer.innerHTML = '';
 
     books.forEach(book => {
       const item = document.createElement('div');
       item.className = 'book-search-card';
       item.innerHTML = `
-        <img class="book-thumb" src="${book.thumbnail}" alt="Capa" loading="lazy">
-        <div class="book-info">
-          <span class="book-info-title">${book.title}</span>
-          <span class="book-info-meta">${book.authors}</span>
-          <span class="book-info-meta">${book.totalPages} páginas</span>
+        <img class="book-cover" src="${book.thumbnail}" alt="Capa" loading="lazy">
+        <div class="book-details">
+          <span class="book-title" title="${book.title}">${book.title}</span>
+          <span class="book-author">${book.authors} (${book.year})</span>
+          <span class="book-meta-tag">${book.totalPages} páginas</span>
         </div>
-        <button class="btn primary-btn add-book-btn" style="width: auto; padding: 6px 10px; font-size: 0.75rem;">+ Adicionar</button>
+        <select class="quick-add-select">
+          <option value="">+ Estante</option>
+          <option value="reading">Lendo</option>
+          <option value="want_to_read">Quero Ler</option>
+          <option value="read">Já Li</option>
+        </select>
       `;
 
-      item.querySelector('.add-book-btn').addEventListener('click', () => {
-        const added = this.readingManager.addBook(book);
-        if (added) {
-          this.renderLibrary();
-          alert(`"${book.title}" adicionado à sua biblioteca!`);
+      const select = item.querySelector('.quick-add-select');
+      select.addEventListener('change', (e) => {
+        const shelf = e.target.value;
+        if (!shelf) return;
+
+        const res = this.libraryManager.addBook(book, shelf);
+        if (res.success) {
+          select.value = '';
+          this.updateShelfCounts();
+          this.renderUserShelf();
+          this.updateGlobalDashboard();
+          alert(`"${book.title}" adicionado à estante!`);
         } else {
-          alert('Este livro já está na sua biblioteca.');
+          alert('Este livro já está na sua estante!');
+          select.value = '';
         }
       });
 
-      this.apiSearchResults.appendChild(item);
+      this.searchResultsContainer.appendChild(item);
     });
   }
 
-  renderLibrary() {
-    this.libraryListEl.innerHTML = '';
-    const books = this.readingManager.library;
+  renderUserShelf() {
+    this.myShelfList.innerHTML = '';
+    const books = this.libraryManager.getFiltered(this.activeShelfFilter);
 
     if (books.length === 0) {
-      this.libraryListEl.innerHTML = `<p class="item-meta">Sua biblioteca está vazia. Adicione livros acima!</p>`;
+      this.myShelfList.innerHTML = `<p class="item-meta" style="text-align: center; padding: 20px;">Nenhum livro nesta estante.</p>`;
       return;
     }
 
+    const statusLabels = {
+      reading: 'Lendo',
+      want_to_read: 'Quero Ler',
+      read: 'Lido',
+      dnf: 'Pausa'
+    };
+
     books.forEach(book => {
       const card = document.createElement('div');
-      card.className = 'item-card';
+      card.className = 'user-book-card';
       card.innerHTML = `
-        <div style="display: flex; gap: 12px; align-items: center;">
-          <img class="book-thumb" src="${book.thumbnail}" alt="Capa" style="width: 40px; height: 56px;">
-          <div style="flex: 1;">
-            <div class="item-card-header">
-              <span class="item-title">${book.title}</span>
-              <span class="item-meta">${book.status === 'completed' ? '✅ Lido' : '📖 Lendo'}</span>
-            </div>
-            <div class="item-meta">${book.authors}</div>
+        <div class="user-book-main">
+          <img class="book-cover" src="${book.thumbnail}" alt="Capa" style="width: 58px; height: 84px;">
+          <div class="user-book-info">
+            <span class="user-book-status-tag status-${book.status}">${statusLabels[book.status]}</span>
+            <span class="book-title" style="font-size: 0.95rem;">${book.title}</span>
+            <span class="book-author">${book.authors}</span>
+            ${book.rating > 0 ? `<div class="stars-rating">${'★'.repeat(book.rating)}${'☆'.repeat(5 - book.rating)}</div>` : ''}
           </div>
         </div>
 
@@ -435,38 +560,95 @@ class AppUI {
           <div class="progress-bar" style="width: ${book.progressPercentage}%"></div>
         </div>
 
-        <div class="item-card-header" style="margin-top: 6px;">
-          <span class="item-meta">${book.currentPage} de ${book.totalPages} páginas (${book.progressPercentage}%)</span>
-          <button class="btn secondary-btn update-progress-btn" style="width: auto; padding: 4px 8px; font-size: 0.75rem;">
-            Atualizar Páginas
-          </button>
+        <div class="user-book-footer">
+          <span>${book.currentPage} de ${book.totalPages} págs (${book.progressPercentage}%)</span>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn secondary-btn edit-progress-btn" style="padding: 5px 10px; font-size: 0.75rem;">
+              Atualizar
+            </button>
+            <button class="btn secondary-btn remove-book-btn" style="padding: 5px 8px; font-size: 0.75rem; color: #ef4444;">
+              ✕
+            </button>
+          </div>
         </div>
       `;
 
-      card.querySelector('.update-progress-btn').addEventListener('click', () => {
-        const input = prompt(`Quantas páginas você já leu de "${book.title}"?`, book.currentPage);
-        if (input !== null && !isNaN(input)) {
-          this.readingManager.updateBookProgress(book.id, input);
-          this.renderLibrary();
-          this.updateOverviewStats();
+      card.querySelector('.edit-progress-btn').addEventListener('click', () => this.openProgressModal(book));
+      card.querySelector('.remove-book-btn').addEventListener('click', () => {
+        if (confirm(`Remover "${book.title}" da sua estante?`)) {
+          this.libraryManager.removeBook(book.id);
+          this.updateShelfCounts();
+          this.renderUserShelf();
+          this.updateGlobalDashboard();
         }
       });
 
-      this.libraryListEl.appendChild(card);
+      this.myShelfList.appendChild(card);
     });
   }
 
-  updateOverviewStats() {
-    const today = new Date().toISOString().split('T')[0];
-    const todayWorkouts = this.workoutManager.getEntriesForDate(today);
-    this.statWorkoutsCount.innerText = todayWorkouts.length;
+  updateShelfCounts() {
+    const counts = this.libraryManager.getCounts();
+    document.getElementById('count-all').innerText = counts.all;
+    document.getElementById('count-reading').innerText = counts.reading;
+    document.getElementById('count-want').innerText = counts.want_to_read;
+    document.getElementById('count-read').innerText = counts.read;
+    document.getElementById('count-dnf').innerText = counts.dnf;
+    this.shelfTotalBadge.innerText = `${counts.all} livros`;
+  }
 
-    const totalPages = this.readingManager.library.reduce((acc, b) => acc + Number(b.currentPage), 0);
-    this.statPagesRead.innerText = totalPages;
+  openProgressModal(book) {
+    this.selectedBookForModal = book;
+    this.modalBookTitle.innerText = book.title;
+    this.modalBookAuthor.innerText = `${book.authors} • Total: ${book.totalPages} págs`;
+    this.modalPageInput.value = book.currentPage;
+    this.modalPageInput.max = book.totalPages;
+    this.modalPagesTotal.innerText = `Meta: ${book.totalPages} páginas`;
+    this.modalStatusSelect.value = book.status;
+
+    this.modalRatingContainer.style.display = book.status === 'read' ? 'block' : 'none';
+    this.setModalRating(book.rating || 0);
+
+    this.modal.classList.add('open');
+  }
+
+  setModalRating(rating) {
+    this.activeModalRating = rating;
+    this.modalStars.forEach(s => {
+      const starVal = Number(s.dataset.star);
+      s.classList.toggle('active', starVal <= rating);
+    });
+  }
+
+  closeModal() {
+    this.modal.classList.remove('open');
+    this.selectedBookForModal = null;
+  }
+
+  saveModalProgress() {
+    if (!this.selectedBookForModal) return;
+
+    const page = Number(this.modalPageInput.value);
+    const status = this.modalStatusSelect.value;
+    const rating = status === 'read' ? this.activeModalRating : 0;
+
+    this.libraryManager.updateBook(this.selectedBookForModal.id, page, status, rating);
+    this.closeModal();
+    this.updateShelfCounts();
+    this.renderUserShelf();
+    this.updateGlobalDashboard();
+  }
+
+  updateGlobalDashboard() {
+    this.statWorkouts.innerText = this.workoutManager.getTodayCount();
+    const counts = this.libraryManager.getCounts();
+    this.statBooksReading.innerText = counts.reading;
+    this.statBooksCompleted.innerText = counts.read;
+    this.statPagesRead.innerText = this.libraryManager.getTotalPagesRead();
   }
 }
 
-// Inicialização
+// Inicialização segura
 document.addEventListener('DOMContentLoaded', () => {
   new AppUI();
 });

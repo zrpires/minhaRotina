@@ -8,21 +8,21 @@
 </head>
 <body>
   <div id="app">
-    <!-- Cabeçalho -->
+    <!-- Topo / Header -->
     <header class="app-header">
-      <h1 id="view-title">Treinos</h1>
+      <h1 id="view-title">Biblioteca</h1>
       <span id="current-date"></span>
     </header>
 
-    <!-- Conteúdo Principal -->
+    <!-- Conteúdo Dinâmico -->
     <main class="content-container">
       
-      <!-- Seção: Treinos -->
-      <section id="view-workouts" class="view active">
+      <!-- ABA 1: TREINOS -->
+      <section id="view-workouts" class="view">
         <div class="card form-card">
           <h2>Registrar Exercício</h2>
           <form id="workout-form">
-            <input type="text" id="exercise-name" placeholder="Exercício (ex: Supino Reto)" required>
+            <input type="text" id="exercise-name" placeholder="Exercício (ex: Supino Inclinado)" required>
             <div class="form-row">
               <input type="number" id="exercise-sets" placeholder="Séries" min="1" required>
               <input type="number" id="exercise-reps" placeholder="Reps" min="1" required>
@@ -42,44 +42,76 @@
         </div>
       </section>
 
-      <!-- Seção: Leitura & Livros -->
-      <section id="view-reading" class="view">
-        <div class="card form-card">
-          <h2>Explorar & Buscar Livros</h2>
+      <!-- ABA 2: LEITURA & ESTANTE (ESTILO SKOOB / MARATONA.APP) -->
+      <section id="view-reading" class="view active">
+        
+        <!-- Bloco de Busca Global -->
+        <div class="card search-card">
+          <h2>Explorar Acervo de Livros</h2>
           <div class="search-box">
-            <input type="text" id="book-search-input" placeholder="Buscar por título, autor ou gênero...">
-            <button type="button" id="btn-search-book" class="btn secondary-btn">Buscar</button>
+            <input type="text" id="book-search-input" placeholder="Pesquise qualquer livro, autor ou ISBN...">
+            <button type="button" id="btn-search-book" class="btn primary-btn">Buscar</button>
           </div>
+
+          <!-- Filtros de Tipo de Busca -->
+          <div class="search-type-filters">
+            <button class="pill-btn active" data-type="all">Tudo</button>
+            <button class="pill-btn" data-type="title">Título</button>
+            <button class="pill-btn" data-type="author">Autor</button>
+          </div>
+
+          <!-- Status de Carregamento -->
+          <div id="search-status" class="status-msg"></div>
+
+          <!-- Lista de Resultados da Busca -->
+          <div id="search-results-container" class="search-results-list"></div>
           
-          <!-- Estado de feedback da API -->
-          <div id="api-status-message" class="status-message"></div>
-
-          <!-- Grade de Resultados da API -->
-          <div id="api-search-results" class="books-grid"></div>
-
-          <button type="button" id="btn-load-more-books" class="btn outline-btn" style="display: none; margin-top: 12px;">
-            Carregar Mais Livros
+          <button id="btn-load-more" class="btn secondary-btn" style="display: none; margin-top: 10px;">
+            Carregar Mais Resultados
           </button>
         </div>
 
-        <div class="list-section">
-          <h3>Minha Biblioteca Pessoal</h3>
-          <div id="library-list" class="cards-list"></div>
+        <!-- Bloco da Minha Estante Individual -->
+        <div class="library-section">
+          <div class="shelf-header">
+            <h3>Minha Estante</h3>
+            <span id="shelf-total-badge" class="badge">0 livros</span>
+          </div>
+
+          <!-- Filtros de Estante (Tabs do Skoob) -->
+          <div class="shelf-tabs">
+            <button class="shelf-tab active" data-shelf="all">Todos (<span id="count-all">0</span>)</button>
+            <button class="shelf-tab" data-shelf="reading">Lendo (<span id="count-reading">0</span>)</button>
+            <button class="shelf-tab" data-shelf="want_to_read">Quero Ler (<span id="count-want">0</span>)</button>
+            <button class="shelf-tab" data-shelf="read">Lidos (<span id="count-read">0</span>)</button>
+            <button class="shelf-tab" data-shelf="dnf">Pausa (<span id="count-dnf">0</span>)</button>
+          </div>
+
+          <!-- Lista dos Livros Salvos do Usuário -->
+          <div id="my-shelf-list" class="cards-list"></div>
         </div>
       </section>
 
-      <!-- Seção: Resumo / Dashboard -->
+      <!-- ABA 3: PAINEL GERAL -->
       <section id="view-overview" class="view">
         <div class="card summary-card">
-          <h2>Resumo Diário</h2>
+          <h2>Painel Geral de Produtividade</h2>
           <div class="stats-grid">
             <div class="stat-box">
               <span class="stat-number" id="stat-workouts-count">0</span>
               <span class="stat-label">Exercícios Registrados Hoje</span>
             </div>
             <div class="stat-box">
+              <span class="stat-number" id="stat-books-reading">0</span>
+              <span class="stat-label">Livros em Andamento</span>
+            </div>
+            <div class="stat-box">
               <span class="stat-number" id="stat-pages-read">0</span>
               <span class="stat-label">Páginas Lidas no Total</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-number" id="stat-books-completed">0</span>
+              <span class="stat-label">Livros Concluídos</span>
             </div>
           </div>
         </div>
@@ -87,13 +119,57 @@
 
     </main>
 
-    <!-- Navegação Mobile Inferior -->
+    <!-- Modal Rápido para Atualizar Leitura -->
+    <div id="progress-modal" class="modal-backdrop">
+      <div class="modal-sheet">
+        <h3 id="modal-book-title">Atualizar Leitura</h3>
+        <p id="modal-book-author" class="item-meta"></p>
+        
+        <div class="modal-inputs">
+          <label>Página atual:</label>
+          <div class="page-stepper">
+            <button type="button" class="btn-step" id="btn-step-minus">-10</button>
+            <input type="number" id="modal-page-input" min="0">
+            <button type="button" class="btn-step" id="btn-step-plus">+10</button>
+          </div>
+          <span id="modal-pages-total" class="item-meta"></span>
+        </div>
+
+        <div class="modal-status-select">
+          <label>Mover para estante:</label>
+          <select id="modal-status-select">
+            <option value="reading">Lendo</option>
+            <option value="want_to_read">Quero Ler</option>
+            <option value="read">Lido (Concluído)</option>
+            <option value="dnf">Abandonado / Pausado</option>
+          </select>
+        </div>
+
+        <div id="modal-rating-container" class="modal-rating" style="display: none;">
+          <label>Sua Avaliação:</label>
+          <div class="stars-picker" id="modal-stars">
+            <span data-star="1">★</span>
+            <span data-star="2">★</span>
+            <span data-star="3">★</span>
+            <span data-star="4">★</span>
+            <span data-star="5">★</span>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="modal-btn-cancel" class="btn secondary-btn">Cancelar</button>
+          <button type="button" id="modal-btn-save" class="btn primary-btn">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Barra de Navegação Inferior -->
     <nav class="bottom-nav">
-      <button class="nav-item active" data-target="view-workouts">
-        <span class="nav-icon">🏋️️</span>
+      <button class="nav-item" data-target="view-workouts">
+        <span class="nav-icon">🏋️</span>
         <span class="nav-label">Treinos</span>
       </button>
-      <button class="nav-item" data-target="view-reading">
+      <button class="nav-item active" data-target="view-reading">
         <span class="nav-icon">📚</span>
         <span class="nav-label">Leitura</span>
       </button>

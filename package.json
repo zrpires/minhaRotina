@@ -1,0 +1,21 @@
+{
+  "name": "minharotina",
+  "version": "1.0.0",
+  "description": "Frustrado com aplicativos horriveis de rotina, decidi criar o meu!!!",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zrpires/minhaRotina.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/zrpires/minhaRotina/issues"
+  },
+  "homepage": "https://github.com/zrpires/minhaRotina#readme"
+}
