@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Organizador Pessoal</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+
+    <header class="app-header">
+      <h1 id="view-title">Treinos</h1>
+      <span id="current-date"></span>
+    </header>
+
+    <!-- Conteúdo principal da página -->
+    <main class="content-container">
+      
+      <!-- Treinos e registros de atividades físicas -->
+      <section id="view-workouts" class="view active">
+        <div class="card form-card">
+          <h2>Registrar Exercício</h2>
+          <form id="workout-form">
+            <input type="text" id="exercise-name" placeholder="Exercício (ex: Supino Reto)" required>
+            <div class="form-row">
+              <input type="number" id="exercise-sets" placeholder="Séries" min="1" required>
+              <input type="number" id="exercise-reps" placeholder="Reps" min="1" required>
+              <input type="number" id="exercise-weight" placeholder="Carga (kg)" min="0" step="0.5" required>
+            </div>
+            <div class="form-row">
+              <input type="number" id="exercise-duration" placeholder="Duração (min)" min="1" required>
+              <input type="date" id="exercise-date" required>
+            </div>
+            <button type="submit" class="btn primary-btn">Salvar Exercício</button>
+          </form>
+        </div>
+
+        <div class="list-section">
+          <h3>Histórico de Treinos</h3>
+          <div id="workout-list" class="cards-list"></div>
+        </div>
+      </section>
+
+      <!-- Organização de leitura -->
+      <section id="view-reading" class="view">
+        <div class="card form-card">
+          <h2>Buscar e Adicionar Livro</h2>
+          <div class="search-box">
+            <input type="text" id="book-search-input" placeholder="Digite o título do livro...">
+            <button type="button" id="btn-search-book" class="btn secondary-btn">Buscar</button>
+          </div>
+          <div id="api-search-results" class="search-results-list"></div>
+        </div>
+
+        <div class="list-section">
+          <h3>Minha Biblioteca</h3>
+          <div id="library-list" class="cards-list"></div>
+        </div>
+      </section>
+
+      <!-- Visão Geral e hábitos a seguir -->
+      <section id="view-overview" class="view">
+        <div class="card summary-card">
+          <h2>Resumo Diário</h2>
+          <div class="stats-grid">
+            <div class="stat-box">
+              <span class="stat-number" id="stat-workouts-count">0</span>
+              <span class="stat-label">Exercícios Hoje</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-number" id="stat-pages-read">0</span>
+              <span class="stat-label">Páginas Lidas</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Barra de navegação parte inferior do código  -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-target="view-workouts">
+        <span class="nav-icon">🏋️</span>
+        <span class="nav-label">Treinos</span>
+      </button>
+      <button class="nav-item" data-target="view-reading">
+        <span class="nav-icon">📚</span>
+        <span class="nav-label">Leitura</span>
+      </button>
+      <button class="nav-item" data-target="view-overview">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Geral</span>
+      </button>
+    </nav>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
