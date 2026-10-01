@@ -4,20 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Organizador Pessoal</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app">
-
+    <!-- Cabeçalho -->
     <header class="app-header">
       <h1 id="view-title">Treinos</h1>
       <span id="current-date"></span>
     </header>
 
-    <!-- Conteúdo principal da página -->
+    <!-- Conteúdo Principal -->
     <main class="content-container">
       
-      <!-- Treinos e registros de atividades físicas -->
+      <!-- Seção: Treinos -->
       <section id="view-workouts" class="view active">
         <div class="card form-card">
           <h2>Registrar Exercício</h2>
@@ -42,35 +42,44 @@
         </div>
       </section>
 
-      <!-- Organização de leitura -->
+      <!-- Seção: Leitura & Livros -->
       <section id="view-reading" class="view">
         <div class="card form-card">
-          <h2>Buscar e Adicionar Livro</h2>
+          <h2>Explorar & Buscar Livros</h2>
           <div class="search-box">
-            <input type="text" id="book-search-input" placeholder="Digite o título do livro...">
+            <input type="text" id="book-search-input" placeholder="Buscar por título, autor ou gênero...">
             <button type="button" id="btn-search-book" class="btn secondary-btn">Buscar</button>
           </div>
-          <div id="api-search-results" class="search-results-list"></div>
+          
+          <!-- Estado de feedback da API -->
+          <div id="api-status-message" class="status-message"></div>
+
+          <!-- Grade de Resultados da API -->
+          <div id="api-search-results" class="books-grid"></div>
+
+          <button type="button" id="btn-load-more-books" class="btn outline-btn" style="display: none; margin-top: 12px;">
+            Carregar Mais Livros
+          </button>
         </div>
 
         <div class="list-section">
-          <h3>Minha Biblioteca</h3>
+          <h3>Minha Biblioteca Pessoal</h3>
           <div id="library-list" class="cards-list"></div>
         </div>
       </section>
 
-      <!-- Visão Geral e hábitos a seguir -->
+      <!-- Seção: Resumo / Dashboard -->
       <section id="view-overview" class="view">
         <div class="card summary-card">
           <h2>Resumo Diário</h2>
           <div class="stats-grid">
             <div class="stat-box">
               <span class="stat-number" id="stat-workouts-count">0</span>
-              <span class="stat-label">Exercícios Hoje</span>
+              <span class="stat-label">Exercícios Registrados Hoje</span>
             </div>
             <div class="stat-box">
               <span class="stat-number" id="stat-pages-read">0</span>
-              <span class="stat-label">Páginas Lidas</span>
+              <span class="stat-label">Páginas Lidas no Total</span>
             </div>
           </div>
         </div>
@@ -78,10 +87,10 @@
 
     </main>
 
-    <!-- Barra de navegação parte inferior do código  -->
+    <!-- Navegação Mobile Inferior -->
     <nav class="bottom-nav">
       <button class="nav-item active" data-target="view-workouts">
-        <span class="nav-icon">🏋️</span>
+        <span class="nav-icon">🏋️️</span>
         <span class="nav-label">Treinos</span>
       </button>
       <button class="nav-item" data-target="view-reading">

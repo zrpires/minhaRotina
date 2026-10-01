@@ -1,19 +1,28 @@
 /**
- * Gerenciador de Armazenamento Local
+ * Serviço de Persistência Local (Offline-First)
  */
 class StorageService {
   static get(key, defaultValue = []) {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : defaultValue;
+    try {
+      const data = localStorage.getItem(key);
+      return data ? JSON.parse(data) : defaultValue;
+    } catch (e) {
+      console.error('Falha ao ler localStorage:', e);
+      return defaultValue;
+    }
   }
 
   static set(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      console.error('Falha ao salvar no localStorage:', e);
+    }
   }
 }
 
 /**
- * Modelo de Registro de Treino
+ * Entidade de Exercício/Treino
  */
 class WorkoutEntry {
   constructor(id, name, sets, reps, weight, duration, date) {
@@ -32,7 +41,7 @@ class WorkoutEntry {
 }
 
 /**
- * Gerenciador de Exercícios
+ * Gerenciador de Treinos
  */
 class WorkoutManager {
   constructor() {
@@ -47,24 +56,13 @@ class WorkoutManager {
     ));
   }
 
-  addEntry(entryData) {
-    const newEntry = new WorkoutEntry(
-      null,
-      entryData.name,
-      entryData.sets,
-      entryData.reps,
-      entryData.weight,
-      entryData.duration,
-      entryData.date
+  addEntry(data) {
+    const entry = new WorkoutEntry(
+      null, data.name, data.sets, data.reps, data.weight, data.duration, data.date
     );
-    this.entries.unshift(newEntry);
+    this.entries.unshift(entry);
     this.save();
-    return newEntry;
-  }
-
-  removeEntry(id) {
-    this.entries = this.entries.filter(entry => entry.id !== id);
-    this.save();
+    return entry;
   }
 
   save() {
@@ -72,21 +70,22 @@ class WorkoutManager {
   }
 
   getEntriesForDate(dateStr) {
-    return this.entries.filter(entry => entry.date === dateStr);
+    return this.entries.filter(e => e.date === dateStr);
   }
 }
 
 /**
- * Modelo de Livro
+ * Entidade Livro
  */
 class Book {
-  constructor(id, title, authors, totalPages, currentPage = 0, status = 'reading') {
+  constructor(id, title, authors, totalPages, thumbnail, currentPage = 0, status = 'reading') {
     this.id = id;
     this.title = title;
     this.authors = authors;
-    this.totalPages = Number(totalPages) || 1;
+    this.totalPages = Number(totalPages) > 0 ? Number(totalPages) : 1;
+    this.thumbnail = thumbnail || 'https://via.placeholder.com/128x192?text=Sem+Capa';
     this.currentPage = Number(currentPage) || 0;
-    this.status = status; // 'reading', 'completed'
+    this.status = status;
   }
 
   get progressPercentage() {
@@ -94,64 +93,89 @@ class Book {
     return Math.min(100, Math.round(pct));
   }
 
-  updateProgress(pagesRead) {
-    this.currentPage = Math.min(this.totalPages, Number(pagesRead));
-    if (this.currentPage === this.totalPages) {
+  updateProgress(pages) {
+    this.currentPage = Math.min(this.totalPages, Math.max(0, Number(pages)));
+    if (this.currentPage >= this.totalPages) {
       this.status = 'completed';
+    } else {
+      this.status = 'reading';
     }
   }
 }
 
 /**
- * Gerenciador de Leitura & Integração com API
+ * Serviço de Conexão com Google Books API
+ */
+class BookApiService {
+  static async search(query = 'programação ficção', startIndex = 0, maxResults = 20) {
+    const cleanQuery = encodeURIComponent(query.trim() || 'best sellers');
+    const url = `https://www.googleapis.com/books/v1/volumes?q=${cleanQuery}&startIndex=${startIndex}&maxResults=${maxResults}&printType=books`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Erro na API (${response.status})`);
+    }
+
+    const data = await response.json();
+    if (!data.items || data.items.length === 0) {
+      return [];
+    }
+
+    return data.items.map(item => {
+      const info = item.volumeInfo || {};
+      
+      // Forçar HTTPS nas imagens da capa para evitar Mixed Content
+      let cover = info.imageLinks ? (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail) : '';
+      if (cover && cover.startsWith('http://')) {
+        cover = cover.replace('http://', 'https://');
+      }
+
+      return {
+        id: item.id,
+        title: info.title || 'Título Indisponível',
+        authors: info.authors ? info.authors.join(', ') : 'Autor Desconhecido',
+        totalPages: info.pageCount || 250, // Estimativa padrão se a API não possuir contagem
+        thumbnail: cover
+      };
+    });
+  }
+}
+
+/**
+ * Gerenciador da Biblioteca e Leitura
  */
 class ReadingManager {
   constructor() {
     this.storageKey = 'app_reading_library';
     this.library = this.loadLibrary();
+    this.currentQuery = 'desenvolvimento pessoal';
+    this.currentStartIndex = 0;
   }
 
   loadLibrary() {
     const rawData = StorageService.get(this.storageKey, []);
     return rawData.map(item => new Book(
-      item.id, item.title, item.authors, item.totalPages, item.currentPage, item.status
+      item.id, item.title, item.authors, item.totalPages, item.thumbnail, item.currentPage, item.status
     ));
   }
 
-  async searchGoogleBooks(query) {
-    if (!query.trim()) return [];
-    try {
-      const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=5`);
-      const data = await response.json();
-      if (!data.items) return [];
-
-      return data.items.map(item => ({
-        id: item.id,
-        title: item.volumeInfo.title || 'Título desconhecido',
-        authors: item.volumeInfo.authors ? item.volumeInfo.authors.join(', ') : 'Autor desconhecido',
-        totalPages: item.volumeInfo.pageCount || 200
-      }));
-    } catch (error) {
-      console.error('Erro ao conectar com Google Books API:', error);
-      return [];
-    }
-  }
-
   addBook(bookData) {
-    const exists = this.library.some(b => b.id === bookData.id);
-    if (exists) return false;
+    const alreadyExists = this.library.some(b => b.id === bookData.id);
+    if (alreadyExists) return false;
 
-    const newBook = new Book(
+    const book = new Book(
       bookData.id,
       bookData.title,
       bookData.authors,
       bookData.totalPages,
+      bookData.thumbnail,
       0,
       'reading'
     );
-    this.library.unshift(newBook);
+
+    this.library.unshift(book);
     this.save();
-    return newBook;
+    return book;
   }
 
   updateBookProgress(bookId, pages) {
@@ -160,11 +184,6 @@ class ReadingManager {
       book.updateProgress(pages);
       this.save();
     }
-  }
-
-  removeBook(bookId) {
-    this.library = this.library.filter(b => b.id !== bookId);
-    this.save();
   }
 
   save() {
@@ -179,12 +198,14 @@ class AppUI {
   constructor() {
     this.workoutManager = new WorkoutManager();
     this.readingManager = new ReadingManager();
-    this.initDOMElements();
+    this.booksLoadedSoFar = [];
+    
+    this.initElements();
     this.bindEvents();
-    this.renderInitialData();
+    this.initApp();
   }
 
-  initDOMElements() {
+  initElements() {
     this.currentDateEl = document.getElementById('current-date');
     this.viewTitleEl = document.getElementById('view-title');
     this.navButtons = document.querySelectorAll('.nav-item');
@@ -198,37 +219,41 @@ class AppUI {
     // Reading Elements
     this.bookSearchInput = document.getElementById('book-search-input');
     this.btnSearchBook = document.getElementById('btn-search-book');
-    this.searchResultsEl = document.getElementById('api-search-results');
+    this.apiStatusMessage = document.getElementById('api-status-message');
+    this.apiSearchResults = document.getElementById('api-search-results');
+    this.btnLoadMoreBooks = document.getElementById('btn-load-more-books');
     this.libraryListEl = document.getElementById('library-list');
 
-    // Overview Stats
+    // Overview Elements
     this.statWorkoutsCount = document.getElementById('stat-workouts-count');
     this.statPagesRead = document.getElementById('stat-pages-read');
   }
 
   bindEvents() {
-    // Navegação por abas
+    // Alternar abas
     this.navButtons.forEach(btn => {
       btn.addEventListener('click', () => {
-        const targetView = btn.dataset.target;
-        this.switchView(targetView, btn);
+        this.switchView(btn.dataset.target, btn);
       });
     });
 
-    // Adição do formulário de treino
+    // Submissão de treino
     this.workoutForm.addEventListener('submit', (e) => {
       e.preventDefault();
       this.handleWorkoutSubmit();
     });
 
-    // Buscador de livros interativa
-    this.btnSearchBook.addEventListener('click', () => this.handleBookSearch());
+    // Busca de livros
+    this.btnSearchBook.addEventListener('click', () => this.handleNewBookSearch());
     this.bookSearchInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.handleBookSearch();
+      if (e.key === 'Enter') this.handleNewBookSearch();
     });
+
+    // Botão "Carregar Mais Livros"
+    this.btnLoadMoreBooks.addEventListener('click', () => this.handleLoadMoreBooks());
   }
 
-  renderInitialData() {
+  initApp() {
     const today = new Date().toISOString().split('T')[0];
     this.exerciseDateInput.value = today;
     this.currentDateEl.innerText = new Date().toLocaleDateString('pt-BR', {
@@ -238,6 +263,9 @@ class AppUI {
     this.renderWorkouts();
     this.renderLibrary();
     this.updateOverviewStats();
+
+    // Carregamento automático de livros disponíveis ao iniciar
+    this.fetchAndRenderBooks(false);
   }
 
   switchView(viewId, activeBtn) {
@@ -280,7 +308,7 @@ class AppUI {
     const entries = this.workoutManager.entries;
 
     if (entries.length === 0) {
-      this.workoutListEl.innerHTML = `<p class="item-meta">Nenhum treino registrado.</p>`;
+      this.workoutListEl.innerHTML = `<p class="item-meta">Nenhum treino registrado ainda.</p>`;
       return;
     }
 
@@ -295,50 +323,87 @@ class AppUI {
         <div class="item-meta">
           ${entry.sets} séries × ${entry.reps} reps | ${entry.weight} kg (${entry.duration} min)
         </div>
-        <div class="item-meta" style="color: var(--accent-color);">
-          Volume Total: ${entry.totalVolume} kg
+        <div class="item-meta" style="color: var(--accent-color); font-weight: 500;">
+          Volume: ${entry.totalVolume} kg levantados
         </div>
       `;
       this.workoutListEl.appendChild(card);
     });
   }
 
-  async handleBookSearch() {
-    const query = this.bookSearchInput.value;
-    if (!query) return;
+  async handleNewBookSearch() {
+    const query = this.bookSearchInput.value.trim();
+    this.readingManager.currentQuery = query || 'ficção popular';
+    this.readingManager.currentStartIndex = 0;
+    this.booksLoadedSoFar = [];
+    this.apiSearchResults.innerHTML = '';
+    await this.fetchAndRenderBooks(false);
+  }
 
-    this.searchResultsEl.innerHTML = `<p class="item-meta">Buscando na API...</p>`;
-    const results = await this.readingManager.searchGoogleBooks(query);
-    this.searchResultsEl.innerHTML = '';
+  async handleLoadMoreBooks() {
+    this.readingManager.currentStartIndex += 20;
+    await this.fetchAndRenderBooks(true);
+  }
 
-    if (results.length === 0) {
-      this.searchResultsEl.innerHTML = `<p class="item-meta">Nenhum livro encontrado.</p>`;
-      return;
+  async fetchAndRenderBooks(isAppend = false) {
+    this.apiStatusMessage.innerText = 'Carregando livros disponíveis...';
+    this.btnLoadMoreBooks.style.display = 'none';
+
+    try {
+      const results = await BookApiService.search(
+        this.readingManager.currentQuery,
+        this.readingManager.currentStartIndex,
+        20
+      );
+
+      this.apiStatusMessage.innerText = '';
+
+      if (results.length === 0 && !isAppend) {
+        this.apiStatusMessage.innerText = 'Nenhum livro encontrado para esta busca.';
+        return;
+      }
+
+      this.booksLoadedSoFar = isAppend ? [...this.booksLoadedSoFar, ...results] : results;
+      this.renderApiBooks(results, isAppend);
+
+      if (results.length >= 20) {
+        this.btnLoadMoreBooks.style.display = 'block';
+      }
+    } catch (err) {
+      console.error(err);
+      this.apiStatusMessage.innerText = 'Falha ao buscar livros. Verifique sua conexão e tente novamente.';
+    }
+  }
+
+  renderApiBooks(books, isAppend) {
+    if (!isAppend) {
+      this.apiSearchResults.innerHTML = '';
     }
 
-    results.forEach(book => {
-      const row = document.createElement('div');
-      row.className = 'search-result-item';
-      row.innerHTML = `
-        <div>
-          <div style="font-size: 0.85rem; font-weight: 600;">${book.title}</div>
-          <div class="item-meta">${book.authors} (${book.totalPages} págs)</div>
+    books.forEach(book => {
+      const item = document.createElement('div');
+      item.className = 'book-search-card';
+      item.innerHTML = `
+        <img class="book-thumb" src="${book.thumbnail}" alt="Capa" loading="lazy">
+        <div class="book-info">
+          <span class="book-info-title">${book.title}</span>
+          <span class="book-info-meta">${book.authors}</span>
+          <span class="book-info-meta">${book.totalPages} páginas</span>
         </div>
-        <button class="btn primary-btn" style="width: auto; padding: 6px 12px; font-size: 0.75rem;">+ Adicionar</button>
+        <button class="btn primary-btn add-book-btn" style="width: auto; padding: 6px 10px; font-size: 0.75rem;">+ Adicionar</button>
       `;
 
-      row.querySelector('button').addEventListener('click', () => {
+      item.querySelector('.add-book-btn').addEventListener('click', () => {
         const added = this.readingManager.addBook(book);
         if (added) {
-          this.searchResultsEl.innerHTML = '';
-          this.bookSearchInput.value = '';
           this.renderLibrary();
+          alert(`"${book.title}" adicionado à sua biblioteca!`);
         } else {
-          alert('Livro já existe na biblioteca!');
+          alert('Este livro já está na sua biblioteca.');
         }
       });
 
-      this.searchResultsEl.appendChild(row);
+      this.apiSearchResults.appendChild(item);
     });
   }
 
@@ -347,7 +412,7 @@ class AppUI {
     const books = this.readingManager.library;
 
     if (books.length === 0) {
-      this.libraryListEl.innerHTML = `<p class="item-meta">Sua estante está vazia.</p>`;
+      this.libraryListEl.innerHTML = `<p class="item-meta">Sua biblioteca está vazia. Adicione livros acima!</p>`;
       return;
     }
 
@@ -355,25 +420,35 @@ class AppUI {
       const card = document.createElement('div');
       card.className = 'item-card';
       card.innerHTML = `
-        <div class="item-card-header">
-          <span class="item-title">${book.title}</span>
-          <span class="item-meta">${book.status === 'completed' ? '✅ Lido' : '📖 Lendo'}</span>
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <img class="book-thumb" src="${book.thumbnail}" alt="Capa" style="width: 40px; height: 56px;">
+          <div style="flex: 1;">
+            <div class="item-card-header">
+              <span class="item-title">${book.title}</span>
+              <span class="item-meta">${book.status === 'completed' ? '✅ Lido' : '📖 Lendo'}</span>
+            </div>
+            <div class="item-meta">${book.authors}</div>
+          </div>
         </div>
-        <div class="item-meta">${book.authors}</div>
+
         <div class="progress-container">
           <div class="progress-bar" style="width: ${book.progressPercentage}%"></div>
         </div>
-        <div class="item-card-header" style="margin-top: 4px;">
-          <span class="item-meta">${book.currentPage} / ${book.totalPages} págs (${book.progressPercentage}%)</span>
-          <button class="btn secondary-btn update-btn" style="width: auto; padding: 4px 8px; font-size: 0.75rem;">Atualizar Páginas</button>
+
+        <div class="item-card-header" style="margin-top: 6px;">
+          <span class="item-meta">${book.currentPage} de ${book.totalPages} páginas (${book.progressPercentage}%)</span>
+          <button class="btn secondary-btn update-progress-btn" style="width: auto; padding: 4px 8px; font-size: 0.75rem;">
+            Atualizar Páginas
+          </button>
         </div>
       `;
 
-      card.querySelector('.update-btn').addEventListener('click', () => {
-        const pages = prompt(`Atualizar páginas lidas de "${book.title}":`, book.currentPage);
-        if (pages !== null && !isNaN(pages)) {
-          this.readingManager.updateBookProgress(book.id, pages);
+      card.querySelector('.update-progress-btn').addEventListener('click', () => {
+        const input = prompt(`Quantas páginas você já leu de "${book.title}"?`, book.currentPage);
+        if (input !== null && !isNaN(input)) {
+          this.readingManager.updateBookProgress(book.id, input);
           this.renderLibrary();
+          this.updateOverviewStats();
         }
       });
 
@@ -391,7 +466,7 @@ class AppUI {
   }
 }
 
-// Inicia a aplicação
+// Inicialização
 document.addEventListener('DOMContentLoaded', () => {
   new AppUI();
 });
