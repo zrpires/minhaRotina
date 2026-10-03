@@ -1,0 +1,65 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm]
+}
+
+model Work {
+  id              String       @id @default(uuid())
+  canonicalTitle  String       @map("canonical_title") @db.VarChar(500)
+  normalizedTitle String       @map("normalized_title") @db.VarChar(500)
+  description     String?      @db.Text
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  editions        Edition[]
+  authors         WorkAuthor[]
+
+  @@index([normalizedTitle])
+  @@map("works")
+}
+
+model Edition {
+  id           String   @id @default(uuid())
+  workId       String   @map("work_id")
+  title        String   @db.VarChar(500)
+  isbn13       String?  @unique @db.VarChar(13)
+  pageCount    Int?     @map("page_count")
+  coverUrl     String?  @map("cover_url")
+  
+  searchVector Unsupported("tsvector")? @map("search_vector")
+
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  work         Work     @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@index([title])
+  @@map("editions")
+}
+
+model Author {
+  id             String       @id @default(uuid())
+  name           String       @db.VarChar(255)
+  normalizedName String       @map("normalized_name") @db.VarChar(255)
+  works          WorkAuthor[]
+
+  @@index([normalizedName])
+  @@map("authors")
+}
+
+model WorkAuthor {
+  workId   String @map("work_id")
+  authorId String @map("author_id")
+
+  work     Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  author   Author @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@id([workId, authorId])
+  @@map("work_authors")
+}

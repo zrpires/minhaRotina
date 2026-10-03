@@ -1,0 +1,6 @@
+allowBuilds:
+  '@parcel/watcher': false
+  '@prisma/client': true
+  esbuild: true
+  unrs-resolver: false
+  workerd: true
